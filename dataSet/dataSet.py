@@ -1,100 +1,86 @@
-# Bibliothèques nécessaires
-from sklearn.model_selection import train_test_split
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-# Charge les données
+from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import OneHotEncoder, FunctionTransformer
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error
+
+# Chargement
 data = pd.read_csv("dataSet/ufc-fighters-statistics.csv")
 
-# Vérifie les données et leurs types
-print("Aperçu des données :")
-print(data.head())
-print("\nTypes de données :")
-print(data.dtypes)
 
-# Supprime les valeurs nulles (si nécessaire)
-data.dropna(inplace=True)
+#nettoyage de données
 
-# Définir les variables X (indépendantes) et Y (dépendantes)
-x = data.drop(['wins'], axis=1)  # Supprimer la colonne 'wins' pour créer X
-y = data['wins']  # Variable cible (à prédire)
+# Traitement de l'âge(convertir date_of_birth en en **objets datetime**)
+data['date_of_birth'] = pd.to_datetime(data['date_of_birth'], errors='coerce')
+data['age'] = (pd.to_datetime("today") - data['date_of_birth']).dt.days // 365
 
-# Diviser les données en ensembles d'entraînement et de test
-x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2, random_state=42)
+#suppression des colonnes inutiles
+data.drop(columns=['date_of_birth', 'name', 'nickname'], inplace=True)
 
-# Joindre x_train et y_train pour l'analyse exploratoire
-train_data = x_train.join(y_train)
+# Cible et attributs
+y = data['wins']
+X = data.drop(columns=['wins'])
 
-# Conserve uniquement les colonnes numériques pour l'analyse
-numeric_data = train_data.select_dtypes(include=[np.number])
+# Détection des colonnes
+numeric_features = X.select_dtypes(include=[np.number]).columns.tolist()
+categorical_features = ['stance']
 
-# Vérifie les colonnes numériques sélectionnées
-print("\nColonnes numériques dans les données d'entraînement :")
-print(numeric_data.columns)
+# Colonnes à transformer avec log(1+x)
+log_transform_cols = [
+    'losses', 'draws', 'significant_strikes_landed_per_minute',
+    'significant_strikes_absorbed_per_minute', 'average_takedowns_landed_per_15_minutes'
+]
 
-# Affiche des histogrammes pour visualiser la distribution des variables numériques
-numeric_data.hist(figsize=(20, 10))
-plt.suptitle("Distributions des variables numériques dans les données d'entraînement")
-plt.show()
+# Pipeline numérique
+numeric_pipeline = Pipeline([
+    ('imputer', SimpleImputer(strategy='median')),
+    ('log', FunctionTransformer(
+        lambda X: np.log1p(X) if isinstance(X, np.ndarray) else X,
+        validate=False
+    ))
+])
 
-# Calculer et afficher la matrice de corrélation
-plt.figure(figsize=(30, 40))
-sns.heatmap(numeric_data.corr(), annot=True, cmap="YlGnBu")
-plt.title("Matrice de corrélation des variables numériques")
-plt.show()
+# Pipeline catégoriel
+categorical_pipeline = Pipeline([
+    ('imputer', SimpleImputer(strategy='most_frequent')),
+    ('onehot', OneHotEncoder(handle_unknown='ignore'))
+])
 
-#permet juste de normaliser les données tout en évitant
-#les problèmes liés aux valeurs extrêmes
-variables_to_transform = ['losses', 'draws', 'significant_strikes_landed_per_minute', 
-                          'significant_strikes_absorbed_per_minute', 'average_takedowns_landed_per_15_minutes']
+# Prétraitement global
+preprocessor = ColumnTransformer([
+    ('num', numeric_pipeline, numeric_features),
+    ('cat', categorical_pipeline, categorical_features)
+])
 
-for var in variables_to_transform:
-    train_data[var] = np.log(train_data[var] + 1) 
+# Pipeline complet
+model_pipeline = Pipeline([
+    ('preprocessor', preprocessor),
+    ('model', RandomForestRegressor(random_state=42))
+])
 
-#juste pour afficher les histogrammes après la transformation
-#for var in variables_to_transform:
-    # plt.figure(figsize=(8, 4))
-    # plt.hist(train_data[var], bins=30, alpha=0.7, color='orange')
-    # plt.title(f"Distribution transformée de {var}")
-    # plt.xlabel(f"Log({var})")
-    # plt.ylabel("Fréquence")
-    # plt.show()
+# Split
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-#corr() ne prend en paramètre que des valeurs numériques , alors on convertit ces valeurs en valeurs numériques
-# Vérifier si 'significant_strikes_absorbed_per_minute' est numérique ou catégorique
-if train_data['significant_strikes_absorbed_per_minute'].dtype in [np.float64, np.int64]:
-    # Regrouper en catégories avant d'utiliser get_dummies (si nécessaire)
-    bins = [0, 1, 2, 3, np.inf]  # Modifier les seuils selon vos données
-    labels = ['low', 'medium', 'high', 'very_high']
-    train_data['significant_strikes_absorbed_per_minute_bins'] = pd.cut(
-        train_data['significant_strikes_absorbed_per_minute'], bins=bins, labels=labels
-    )
+# Entraînement
+model_pipeline.fit(X_train, y_train)
 
-    # Convertir les catégories en colonnes binaires
-    train_data = train_data.join(
-        pd.get_dummies(train_data['significant_strikes_absorbed_per_minute_bins'], prefix='ssapm')
-    ).drop(['significant_strikes_absorbed_per_minute', 'significant_strikes_absorbed_per_minute_bins'], axis=1)
-else:
-    # Utiliser directement get_dummies si la colonne est catégorique
-    train_data = train_data.join(
-        pd.get_dummies(train_data['significant_strikes_absorbed_per_minute'], prefix='ssapm')
-    ).drop(['significant_strikes_absorbed_per_minute'], axis=1)
+# Prédictions et évaluation
+y_pred = model_pipeline.predict(X_test)
+rmse = mean_squared_error(y_test, y_pred, squared=False)
+print(f"RMSE : {rmse:.2f}")
 
-# Vérifier les types de colonnes
-# print("\nTypes de colonnes dans train_data après transformation :")
-# print(train_data.dtypes)
-
-# Filtrer uniquement les colonnes numériques
-numeric_data = train_data.select_dtypes(include=[np.number])
-
-# Afficher la matrice de corrélation
-plt.figure(figsize=(15, 10))
-sns.heatmap(numeric_data.corr(), annot=True, cmap="YlGnBu")
-plt.title("Matrice de corrélation des variables numériques")
-plt.show()
-
-plt.figure(figsize=(15 , 8))
-sns.scatterplot(x="wins" , y ="losses" , data = train_data, hue="draws", palette= "coolwarm")
+# Visualisation
+plt.figure(figsize=(10, 6))
+sns.scatterplot(x=y_test, y=y_pred)
+plt.xlabel("Victoires réelles")
+plt.ylabel("Victoires prédites")
+plt.title("Comparaison des victoires réelles vs prédites")
+plt.grid(True)
 plt.show()

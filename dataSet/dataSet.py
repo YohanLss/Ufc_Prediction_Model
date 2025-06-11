@@ -25,8 +25,8 @@ data['age'] = (pd.to_datetime("today") - data['date_of_birth']).dt.days // 365
 data.drop(columns=['date_of_birth', 'name', 'nickname'], inplace=True)
 
 # Cible et attributs
-y = data['wins']
-X = data.drop(columns=['wins'])
+y = data['wins']                             #variable à prédire
+X = data.drop(columns=['wins'])              #toutes les colonnes en elevant la variable "wins"
 
 # Détection des colonnes
 numeric_features = X.select_dtypes(include=[np.number]).columns.tolist()
@@ -66,6 +66,7 @@ model_pipeline = Pipeline([
 ])
 
 # Split
+# Diviser les données en ensembles d'entraînement et de test
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
 # Entraînement
